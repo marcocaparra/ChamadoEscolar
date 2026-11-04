@@ -1,0 +1,343 @@
+[
+  {
+    "id": "v3_tab",
+    "type": "tab",
+    "label": "Botoes Magicos V3 - Gestao",
+    "disabled": false,
+    "info": "Leia GUIA_COMPLETO.txt. Requer contextStorage arquivo. Substitui o fluxo anterior. Cadastre salas em Identificar sala. Telegram opcional."
+  },
+  {
+    "id": "v3_post",
+    "type": "http in",
+    "z": "v3_tab",
+    "name": "Receber estados",
+    "url": "/chamado",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 120,
+    "y": 100,
+    "wires": [
+      [
+        "v3_identificar"
+      ]
+    ]
+  },
+  {
+    "id": "v3_identificar",
+    "type": "function",
+    "z": "v3_tab",
+    "name": "Identificar sala",
+    "func": "// CADASTRO UNICO DAS 47 PLACAS. Use MAC real em MAIUSCULAS.\nconst salas = {};\nconst d = msg.payload;\nconst mac = d && typeof d.dispositivo === \"string\" ? d.dispositivo.trim().toUpperCase() : \"\";\nif (!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(mac) || mac === \"00:00:00:00:00:00\" || mac === \"FF:FF:FF:FF:FF:FF\") {\n    msg.statusCode = 400;\n    msg.payload = {ok:false, erro:\"Identificador de placa invalido.\"};\n} else if (!Object.prototype.hasOwnProperty.call(salas, mac)) {\n    node.warn(\"Cadastre esta placa: \" + mac);\n    msg.statusCode = 404;\n    msg.payload = {ok:false, erro:\"Placa sem sala cadastrada: \" + mac};\n} else if (typeof salas[mac] !== \"string\" || !salas[mac].trim() || salas[mac].length > 80) {\n    msg.statusCode = 500;\n    msg.payload = {ok:false, erro:\"Corrija o nome da sala no cadastro.\"};\n} else {\n    msg.dispositivo = mac;\n    msg.sala = salas[mac].trim();\n    return [msg, null];\n}\nmsg.headers = {\"Content-Type\":\"application/json; charset=utf-8\", \"Cache-Control\":\"no-store\"};\nreturn [null, msg];\n",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 350,
+    "y": 100,
+    "wires": [
+      [
+        "v3_processar"
+      ],
+      [
+        "v3_resposta"
+      ]
+    ]
+  },
+  {
+    "id": "v3_processar",
+    "type": "function",
+    "z": "v3_tab",
+    "name": "Salvar pedidos e estados",
+    "func": "const tipos = [\"pedagogico\", \"limpeza\", \"infraestrutura\"];\nconst nomes = {pedagogico:\"Orientação Pedagógica\", limpeza:\"Limpeza\", infraestrutura:\"Infraestrutura\"};\nfunction erro(codigo, texto) {\n    msg.statusCode = codigo;\n    msg.headers = {\"Content-Type\":\"application/json; charset=utf-8\", \"Cache-Control\":\"no-store\"};\n    msg.payload = {ok:false, erro:texto};\n    return [msg, null];\n}\nconst estados = msg.payload && msg.payload.estados;\nif (!Array.isArray(estados) || estados.length !== 3) return erro(400,\"Envie os tres estados.\");\nconst vistos = new Set();\nfor (const e of estados) {\n    if (!e || !tipos.includes(e.tipo) || vistos.has(e.tipo)\n        || typeof e.ativo !== \"boolean\" || !Number.isInteger(e.revisao)\n        || e.revisao < 0 || e.revisao > 4294967295\n        || e.ativo !== (e.revisao % 2 === 1)) {\n        return erro(400,\"Estado, tipo ou revisao invalida.\");\n    }\n    vistos.add(e.tipo);\n}\nlet db;\ntry {\n    // Evita usar memoria por engano quando o store arquivo nao foi configurado.\n    if (flow.get(\"__verificarV3\", \"arquivo\") !== \"ARQUIVO_V3\") {\n        flow.set(\"__verificarV3\", \"ARQUIVO_V3\", \"arquivo\");\n    }\n    if (flow.get(\"__verificarV3\", \"memoria\") === \"ARQUIVO_V3\") {\n        throw new Error(\"Configure os stores memoria e arquivo conforme o guia.\");\n    }\n    const salvo = flow.get(\"pedidosV3\", \"arquivo\");\n    db = salvo ? JSON.parse(JSON.stringify(salvo)) : {versao:3, estados:{}, pedidos:{}};\n} catch (_) {\n    return erro(503,\"Configure contextStorage arquivo no settings.js e reinicie o Node-RED.\");\n}\nif (db.versao !== 3 || !db.estados || !db.pedidos) return erro(500,\"Armazenamento incompativel; restaure um backup.\");\n// Valida todas as revisoes antes de alterar qualquer pedido.\nfor (const e of estados) {\n    const anterior = db.estados[msg.dispositivo + \"|\" + e.tipo];\n    if (anterior && e.revisao < anterior.revisao) return erro(409,\"Revisao antiga. Verifique se a memoria da placa foi apagada.\");\n}\nconst agora = new Date().toISOString();\nlet alterou = false;\nconst notificacoes = [];\nfor (const e of estados) {\n    const chave = msg.dispositivo + \"|\" + e.tipo;\n    const anterior = db.estados[chave];\n    if (anterior && e.revisao === anterior.revisao) continue;\n    alterou = true;\n    const anteriorRev = anterior ? anterior.revisao : 0;\n    const parcial = e.revisao > anteriorRev + 1;\n    const revisaoAbertura = e.ativo ? e.revisao : e.revisao - 1;\n    const pedidoId = e.revisao > 0 ? chave + \"|\" + revisaoAbertura : null;\n    // Fecha ciclo anterior se houve varios toques sem comunicacao.\n    if (anterior && anterior.pedidoId && anterior.pedidoId !== pedidoId) {\n        const antigo = db.pedidos[anterior.pedidoId];\n        if (antigo && antigo.ativo) {\n            antigo.ativo = false;\n            antigo.encerradoEm = agora;\n            antigo.motivo = \"Encerrado pelo botão (sincronizado após interrupção)\";\n            antigo.registroParcial = true;\n        }\n    }\n    if (pedidoId) {\n        let pedido = db.pedidos[pedidoId];\n        if (!pedido) {\n            pedido = {\n                id:pedidoId, dispositivo:msg.dispositivo, sala:msg.sala,\n                tipo:e.tipo, servico:nomes[e.tipo], ativo:e.ativo,\n                abertoEm:e.ativo ? agora : null, recebidoEm:agora,\n                encerradoEm:e.ativo ? null : agora,\n                motivo:e.ativo ? null : \"Encerrado pelo botão\",\n                registroParcial:parcial || !e.ativo\n            };\n            db.pedidos[pedidoId] = pedido;\n        } else if (!e.ativo) {\n            pedido.ativo = false;\n            pedido.encerradoEm = agora;\n            pedido.motivo = \"Encerrado pelo botão\";\n            pedido.registroParcial = pedido.registroParcial || parcial;\n        }\n        notificacoes.push({payload:{\n            text:(e.ativo ? \"🔔 PEDIDO RECEBIDO\" : \"✅ PEDIDO ENCERRADO PELO BOTÃO\")\n                + \"\\nLocal: \" + msg.sala + \"\\nServiço: \" + nomes[e.tipo]\n                + (parcial ? \"\\nEstado atualizado após intervalo de comunicação.\" : \"\")\n        }});\n    }\n    db.estados[chave] = {revisao:e.revisao, ativo:e.ativo, pedidoId, sala:msg.sala};\n}\nif (alterou) {\n    try { flow.set(\"pedidosV3\", db, \"arquivo\"); }\n    catch (_) { return erro(503,\"Nao foi possivel salvar os pedidos.\"); }\n}\nmsg.statusCode = 200;\nmsg.headers = {\"Content-Type\":\"text/plain; charset=utf-8\", \"Cache-Control\":\"no-store\"};\nmsg.payload = \"BOTOES_MAGICOS_SYNC_OK\";\nreturn [msg, notificacoes.length ? notificacoes : null];\n",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 620,
+    "y": 100,
+    "wires": [
+      [
+        "v3_resposta"
+      ],
+      [
+        "v3_telegram"
+      ]
+    ]
+  },
+  {
+    "id": "v3_resposta",
+    "type": "http response",
+    "z": "v3_tab",
+    "name": "Responder ao ESP32",
+    "statusCode": "",
+    "headers": {},
+    "x": 940,
+    "y": 80,
+    "wires": []
+  },
+  {
+    "id": "v3_telegram",
+    "type": "function",
+    "z": "v3_tab",
+    "name": "Telegram opcional",
+    "func": "// OPCIONAL: o painel funciona mesmo sem Telegram.\nconst botToken = \"COLE_SEU_TOKEN_AQUI\";\nconst chatId = \"COLE_SEU_CHAT_ID_AQUI\";\nif (botToken === \"COLE_SEU_TOKEN_AQUI\" || chatId === \"COLE_SEU_CHAT_ID_AQUI\") return null;\nmsg.url = \"https://api.telegram.org/bot\" + botToken + \"/sendMessage\";\nmsg.method = \"POST\";\nmsg.headers = {\"Content-Type\":\"application/json\"};\nmsg.requestTimeout = 10000;\nmsg.payload = {chat_id:chatId, text:msg.payload.text};\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 860,
+    "y": 180,
+    "wires": [
+      [
+        "v3_tg_http"
+      ]
+    ]
+  },
+  {
+    "id": "v3_tg_http",
+    "type": "http request",
+    "z": "v3_tab",
+    "name": "Notificar Telegram",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": true,
+    "headers": [],
+    "x": 1100,
+    "y": 180,
+    "wires": [
+      [
+        "v3_tg_check"
+      ]
+    ]
+  },
+  {
+    "id": "v3_tg_check",
+    "type": "function",
+    "z": "v3_tab",
+    "name": "Conferir notificacao",
+    "func": "if (Number(msg.statusCode) !== 200 || !msg.payload || msg.payload.ok !== true) {\n    node.warn(\"Telegram nao confirmou a notificacao. O pedido permanece registrado no painel.\");\n}\nreturn null;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1340,
+    "y": 180,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "v3_tg_catch",
+    "type": "catch",
+    "z": "v3_tab",
+    "name": "Erro Telegram",
+    "scope": [
+      "v3_tg_http"
+    ],
+    "uncaught": false,
+    "x": 1090,
+    "y": 250,
+    "wires": [
+      [
+        "v3_tg_error"
+      ]
+    ]
+  },
+  {
+    "id": "v3_tg_error",
+    "type": "function",
+    "z": "v3_tab",
+    "name": "Avisar falha",
+    "func": "node.warn(\"Falha de conexao com Telegram. O pedido permanece registrado no painel.\");\nreturn null;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1330,
+    "y": 250,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "v3_status_in",
+    "type": "http in",
+    "z": "v3_tab",
+    "name": "Disponibilidade",
+    "url": "/status",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 120,
+    "y": 340,
+    "wires": [
+      [
+        "v3_status"
+      ]
+    ]
+  },
+  {
+    "id": "v3_status",
+    "type": "function",
+    "z": "v3_tab",
+    "name": "Conferir armazenamento",
+    "func": "try {\n    // Evita usar memoria por engano quando o store arquivo nao foi configurado.\n    if (flow.get(\"__verificarV3\", \"arquivo\") !== \"ARQUIVO_V3\") {\n        flow.set(\"__verificarV3\", \"ARQUIVO_V3\", \"arquivo\");\n    }\n    if (flow.get(\"__verificarV3\", \"memoria\") === \"ARQUIVO_V3\") {\n        throw new Error(\"Configure os stores memoria e arquivo conforme o guia.\");\n    }\n    flow.get(\"pedidosV3\", \"arquivo\");\n    msg.statusCode = 200;\n    msg.payload = \"BOTOES_MAGICOS_OK\";\n} catch (_) {\n    msg.statusCode = 503;\n    msg.payload = \"Configure contextStorage arquivo no Node-RED.\";\n}\nmsg.headers = {\"Content-Type\":\"text/plain; charset=utf-8\", \"Cache-Control\":\"no-store\"};\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 400,
+    "y": 340,
+    "wires": [
+      [
+        "v3_status_out"
+      ]
+    ]
+  },
+  {
+    "id": "v3_status_out",
+    "type": "http response",
+    "z": "v3_tab",
+    "name": "Responder status",
+    "statusCode": "",
+    "headers": {},
+    "x": 700,
+    "y": 340,
+    "wires": []
+  },
+  {
+    "id": "v3_api_in",
+    "type": "http in",
+    "z": "v3_tab",
+    "name": "Dados do painel",
+    "url": "/api/pedidos",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 120,
+    "y": 440,
+    "wires": [
+      [
+        "v3_listar"
+      ]
+    ]
+  },
+  {
+    "id": "v3_listar",
+    "type": "function",
+    "z": "v3_tab",
+    "name": "Listar pedidos",
+    "func": "try {\n    // Evita usar memoria por engano quando o store arquivo nao foi configurado.\n    if (flow.get(\"__verificarV3\", \"arquivo\") !== \"ARQUIVO_V3\") {\n        flow.set(\"__verificarV3\", \"ARQUIVO_V3\", \"arquivo\");\n    }\n    if (flow.get(\"__verificarV3\", \"memoria\") === \"ARQUIVO_V3\") {\n        throw new Error(\"Configure os stores memoria e arquivo conforme o guia.\");\n    }\n    const db = flow.get(\"pedidosV3\", \"arquivo\") || {pedidos:{}};\n    const todos = Object.values(db.pedidos);\n    msg.statusCode = 200;\n    msg.payload = {\n        ok:true, atualizadoEm:new Date().toISOString(),\n        recebidos:todos.filter(p=>p.ativo).sort((a,b)=>b.recebidoEm.localeCompare(a.recebidoEm)),\n        feitos:todos.filter(p=>!p.ativo).sort((a,b)=>b.encerradoEm.localeCompare(a.encerradoEm))\n    };\n} catch (_) {\n    msg.statusCode = 503;\n    msg.payload = {ok:false, erro:\"Configure contextStorage arquivo no settings.js e reinicie o Node-RED.\"};\n}\nmsg.headers = {\"Content-Type\":\"application/json; charset=utf-8\", \"Cache-Control\":\"no-store\"};\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 400,
+    "y": 440,
+    "wires": [
+      [
+        "v3_api_out"
+      ]
+    ]
+  },
+  {
+    "id": "v3_api_out",
+    "type": "http response",
+    "z": "v3_tab",
+    "name": "Responder dados",
+    "statusCode": "",
+    "headers": {},
+    "x": 700,
+    "y": 440,
+    "wires": []
+  },
+  {
+    "id": "v3_painel_in",
+    "type": "http in",
+    "z": "v3_tab",
+    "name": "Painel da gestao",
+    "url": "/gestao",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 120,
+    "y": 540,
+    "wires": [
+      [
+        "v3_html"
+      ]
+    ]
+  },
+  {
+    "id": "v3_html",
+    "type": "template",
+    "z": "v3_tab",
+    "name": "Site com duas abas",
+    "field": "payload",
+    "fieldType": "msg",
+    "format": "html",
+    "syntax": "plain",
+    "template": "<!doctype html>\n<html lang=\"pt-BR\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Botões Mágicos | Gestão</title>\n<style>\n:root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#16312d;background:#f2f5f2}*{box-sizing:border-box}body{margin:0}main{max-width:1180px;margin:auto;padding:38px 24px}header{display:flex;justify-content:space-between;align-items:center;gap:20px}small{letter-spacing:.13em;text-transform:uppercase;color:#48685f;font-weight:700}h1{font-size:clamp(28px,5vw,42px);margin:9px 0}p{line-height:1.6;color:#52645e}.connection{background:white;border-radius:24px;padding:12px 18px;font-size:14px;border:1px solid #d6e2db}.tabs{display:flex;gap:12px;margin:30px 0 18px;flex-wrap:wrap}button{font:inherit;cursor:pointer;border:1px solid #cbdcd1;background:#fff;padding:14px 22px;border-radius:12px;color:#284e42}button[aria-selected=true]{background:#174f3e;color:white;border-color:#174f3e}button:focus-visible,input:focus-visible{outline:3px solid #d29140;outline-offset:3px}.toolbar{display:flex;justify-content:space-between;gap:18px;align-items:center;flex-wrap:wrap}input{font:inherit;padding:12px 14px;border-radius:9px;border:1px solid #cbdcd1;min-width:250px;background:white}.tablewrap{overflow:auto;background:#fff;border:1px solid #d6e2db;border-radius:14px;margin-top:18px}table{border-collapse:collapse;width:100%;min-width:680px}th,td{padding:17px 20px;text-align:left;border-bottom:1px solid #e8eee9}th{font-size:12px;text-transform:uppercase;letter-spacing:.06em;background:#e9f0ea}td{font-size:14px;vertical-align:top}.tag{display:inline-block;background:#fff0cd;color:#765115;border-radius:20px;padding:5px 10px;font-weight:600;font-size:12px}.done{background:#e5f0e9;color:#266746}.note{display:block;font-size:12px;color:#6b736d;margin-top:6px}footer{margin-top:22px;font-size:13px;color:#68776e}#erro{background:#fff0e9;color:#8d301a;border-radius:10px;padding:15px}#vazio{text-align:center;padding:35px;color:#64766b}@media(max-width:600px){header{align-items:flex-start;flex-direction:column}main{padding:25px 16px}input{width:100%}}\n</style></head><body><main>\n<header><div><small>Escola · Central de atendimento</small><h1>Botões Mágicos</h1><p>Acompanhe os pedidos das salas.</p></div><div class=\"connection\" id=\"conexao\" role=\"status\">Conectando ao painel…</div></header>\n<nav class=\"tabs\" role=\"tablist\" aria-label=\"Situação dos pedidos\"><button id=\"tabRecebidos\" role=\"tab\" aria-controls=\"painel\" aria-selected=\"true\">Pedido recebido <span id=\"nRecebidos\">0</span></button><button id=\"tabFeitos\" role=\"tab\" aria-controls=\"painel\" aria-selected=\"false\">Pedido já feito <span id=\"nFeitos\">0</span></button></nav>\n<div id=\"erro\" role=\"alert\" hidden></div>\n<section id=\"painel\" role=\"tabpanel\" aria-labelledby=\"tabRecebidos\"><div class=\"toolbar\"><h2 id=\"titulo\">Pedidos em aberto</h2><label><span class=\"note\">Buscar sala ou serviço</span><input id=\"busca\" type=\"search\" placeholder=\"Ex.: Sala 102 ou Limpeza\"></label></div><div class=\"tablewrap\"><table><thead><tr><th>Sala</th><th>Solicitação</th><th>Recebido no servidor</th><th>Encerramento</th><th>Situação</th></tr></thead><tbody id=\"linhas\"></tbody></table><div id=\"vazio\" hidden>Nenhum pedido nesta aba.</div></div></section>\n<footer>O segundo toque no botão encerra o pedido e apaga o LED. “Pedido já feito” reúne os encerrados pelo botão; não comprova a execução do serviço. Atualização automática a cada 3 segundos.</footer>\n</main><script>\nlet aba='recebidos';let dados={recebidos:[],feitos:[]};let emConsulta=false;\nconst $=id=>document.getElementById(id);\nfunction data(v){return v?new Date(v).toLocaleString('pt-BR'):'Não registrado';}\nfunction celula(linha,texto){const td=document.createElement('td');td.textContent=texto;linha.appendChild(td);return td;}\nfunction render(){\n $('nRecebidos').textContent=dados.recebidos.length;$('nFeitos').textContent=dados.feitos.length;\n const recebidos=aba==='recebidos';$('tabRecebidos').setAttribute('aria-selected',String(recebidos));$('tabFeitos').setAttribute('aria-selected',String(!recebidos));\n $('painel').setAttribute('aria-labelledby',recebidos?'tabRecebidos':'tabFeitos');$('titulo').textContent=recebidos?'Pedidos em aberto':'Pedidos encerrados';\n const filtro=$('busca').value.trim().toLocaleLowerCase('pt-BR');\n const lista=dados[aba].filter(p=>(p.sala+' '+p.servico).toLocaleLowerCase('pt-BR').includes(filtro));\n $('linhas').replaceChildren();$('vazio').hidden=lista.length!==0;\n for(const p of lista){const tr=document.createElement('tr');celula(tr,p.sala);celula(tr,p.servico);const recebimento=celula(tr,data(p.abertoEm||p.recebidoEm));\n  if(p.registroParcial){const n=document.createElement('span');n.className='note';n.textContent='Registro parcial após sincronização. Horários do servidor.';recebimento.appendChild(n);}\n  celula(tr,p.encerradoEm?data(p.encerradoEm):'—');const status=celula(tr,'');const tag=document.createElement('span');tag.className='tag'+(p.ativo?'':' done');tag.textContent=p.ativo?'Recebido':'Encerrado pelo botão';status.appendChild(tag);$('linhas').appendChild(tr);\n }\n}\nasync function atualizar(){if(emConsulta)return;emConsulta=true;try{const r=await fetch('api/pedidos',{cache:'no-store',signal:AbortSignal.timeout(8000)});const j=await r.json();if(!r.ok||j.ok!==true)throw Error(j.erro||'Servidor indisponível');dados=j;render();$('erro').hidden=true;$('conexao').textContent='Painel atualizado às '+new Date().toLocaleTimeString('pt-BR');}catch(e){$('erro').textContent='Sem atualização: '+e.message+'. Os dados na tela podem estar desatualizados.';$('erro').hidden=false;$('conexao').textContent='Sem conexão com o painel';}finally{emConsulta=false;}}\n$('tabRecebidos').onclick=()=>{aba='recebidos';render();};$('tabFeitos').onclick=()=>{aba='feitos';render();};$('busca').oninput=render;\nfor(const [id,outro] of [['tabRecebidos','tabFeitos'],['tabFeitos','tabRecebidos']]){$(id).onkeydown=e=>{if(e.key==='ArrowRight'||e.key==='ArrowLeft'){e.preventDefault();$(outro).click();$(outro).focus();}};}\nrender();atualizar();setInterval(atualizar,3000);\n</script></body></html>",
+    "output": "str",
+    "x": 400,
+    "y": 540,
+    "wires": [
+      [
+        "v3_html_headers"
+      ]
+    ]
+  },
+  {
+    "id": "v3_html_headers",
+    "type": "function",
+    "z": "v3_tab",
+    "name": "Enviar pagina",
+    "func": "msg.statusCode=200;\nmsg.headers={\"Content-Type\":\"text/html; charset=utf-8\", \"Cache-Control\":\"no-store\"};\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 660,
+    "y": 540,
+    "wires": [
+      [
+        "v3_painel_out"
+      ]
+    ]
+  },
+  {
+    "id": "v3_painel_out",
+    "type": "http response",
+    "z": "v3_tab",
+    "name": "Responder painel",
+    "statusCode": "",
+    "headers": {},
+    "x": 920,
+    "y": 540,
+    "wires": []
+  }
+]

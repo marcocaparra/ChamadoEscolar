@@ -1,0 +1,10 @@
+// TRECHO PARA INSERIR DENTRO DE module.exports = { ... } NO settings.js.
+// Se contextStorage ja existir, ajuste a entrada existente; nao duplique.
+contextStorage: {
+    default: "memoria",
+    memoria: { module: "memory" },
+    arquivo: {
+        module: "localfilesystem",
+        config: { cache: true, flushInterval: 5 }
+    }
+},

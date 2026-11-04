@@ -1,0 +1,14 @@
+**/config.h
+*.local.json
+.env
+.env.*
+!.env.example
+node_modules/
+.node-red/
+context/
+*_cred.json
+*.bak
+*.log
+build/
+.DS_Store
+Thumbs.db

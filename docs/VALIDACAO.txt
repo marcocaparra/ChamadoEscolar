@@ -1,0 +1,38 @@
+VALIDACAO LOCAL - BOTOES MAGICOS V3 - 04/11/2026
+
+Firmware:
+Compilado com sucesso para esp32:esp32:esp32 (ESP32 Dev Module),
+com core Espressif 3.3.12.
+Programa: 935316 bytes (71%); variaveis globais: 48432 bytes (14%).
+Nao foi carregado nem testado fisicamente nas placas nesta entrega.
+
+Funcoes Node-RED:
+Sintaxe e ligacoes do fluxo verificadas.
+Testes das funcoes em ambiente JavaScript com contexto simulado:
+abertura, encerramento, nova abertura, reenvio sem duplicacao,
+revisao antiga rejeitada sem alteracao parcial, tres servicos,
+duas salas independentes, placa desconhecida, dados invalidos,
+registro parcial apos interrupcao, stores ausentes e reutilizacao
+de estado serializado. Todos passaram.
+Isso nao substitui testar o runtime Node-RED e seu armazenamento real.
+
+Painel:
+Testado em navegador Microsoft Edge sem interface, servido por um
+servidor local temporario com dados de teste. Verificados as duas abas,
+contagens, busca, estado vazio, aviso de indisponibilidade e recuperacao,
+layout de 1280 px e 390 px e ausencia de erros JavaScript.
+Imagens inspecionadas visualmente. O quadro em celular permite rolagem
+horizontal para mostrar todas as colunas.
+
+Integracao no ambiente da escola:
+Nao houve Deploy no seu Node-RED, envio real de Telegram ou teste de
+rede/hardware. Seguir o roteiro da secao 12 do guia antes da instalacao.
+O firmware V3 e o fluxo V3 devem ser usados juntos.
+
+CORRECAO DE RECONEXAO
+Removida a chamada manual periodica de reconnect; mantido auto-reconnect.
+Adicionado log do motivo de desconexao. Compilacao atual passou para
+ESP32 Dev Module, core 3.3.12: 935988 bytes de programa, 48424 de variaveis.
+LEDs e rede ainda dependem dos testes no circuito real.
+
+LED DE ALIMENTACAO: revisao simples verificada por leitura do codigo: unica escrita no GPIO 2 em HIGH no setup, sem comando que o apague no loop. Nao foi repetida a compilacao para esta alteracao nem feito teste fisico.

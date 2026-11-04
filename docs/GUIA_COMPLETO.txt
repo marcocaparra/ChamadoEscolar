@@ -1,0 +1,400 @@
+BOTOES MAGICOS DOS PROFESSORES
+GUIA COMPLETO - VERSAO 3 - 04/11/2026
+ESP32 + Node-RED + painel de gestao + Telegram opcional
+
+COMECE AQUI
+
+Esta versao substitui o funcionamento anterior de LED temporario.
+Primeiro toque: abre o pedido e acende o LED do respectivo botao.
+Segundo toque: encerra esse pedido e apaga o LED.
+O painel, feito no proprio Node-RED, tem duas abas:
+  - Pedido recebido: pedidos ainda ativos.
+  - Pedido ja feito: pedidos encerrados pelo segundo toque.
+
+IMPORTANTE SOBRE O SIGNIFICADO DO SEGUNDO TOQUE
+O sistema registra "Encerrado pelo botao". Isso atende ao cancelamento
+solicitado e move o item para a aba Pedido ja feito, mas nao comprova que
+o servico foi realizado. Nesta versao nao ha um botao separado no site
+para concluir pedidos: o encerramento e feito no botao fisico da sala.
+
+Os arquivos V3 estao separados dos anteriores. O sketch em uso na pasta
+Documents/Arduino/botoesmagicos nao foi substituido automaticamente.
+Nao misture firmware V3 com o fluxo antigo: o formato das mensagens mudou.
+
+1. ARQUIVOS DESTA ENTREGA
+
+GUIA_COMPLETO.txt
+  Este guia, com montagem, rede, instalacao, migracao e testes.
+
+firmware/botoes_magicos_v3/botoes_magicos_v3.ino
+  Codigo completo para abrir na Arduino IDE. As configuracoes de Wi-Fi
+  vieram do anexo enviado, sem imprimir a senha neste guia. O IP do
+  computador Node-RED foi configurado como 192.168.2.128.
+
+fluxo_node_red_v3.json
+  Fluxo completo para importar no Node-RED: cadastro de salas,
+  sincronizacao, armazenamento, site, consulta de status e Telegram opcional.
+
+configuracao_settings.txt
+  Trecho necessario para guardar pedidos em disco no Node-RED.
+
+painel_gestao.html
+  Copia de referencia do site. A pagina ja esta incorporada no fluxo;
+  nao precisa copiar este arquivo para uma pasta do servidor.
+
+logica/*.js
+  Copias de referencia das funcoes do fluxo para revisao tecnica.
+  A importacao do JSON ja inclui essas funcoes.
+
+2. VISAO GERAL DO SISTEMA
+
+ESP32 da sala -> Wi-Fi -> computador com Node-RED -> painel da gestao
+                                               -> Telegram, se configurado
+
+O ESP32 identifica a placa pelo MAC e envia os tres estados dos botoes.
+O Node-RED consulta o cadastro MAC -> sala e atualiza os pedidos.
+A gestao abre o site no navegador, sem precisar abrir o editor do Node-RED.
+A sala nao fica escrita no firmware: as 47 placas usam o mesmo codigo.
+Cada sala pode ter ate um pedido ativo por servico; os tres sao independentes.
+
+3. HARDWARE E PINOS
+
+Referencia: ESP32 classico/Dev Module com estes GPIOs disponiveis.
+Confira a serigrafia da placa. Numero GPIO nao e posicao fisica do terminal.
+
+Servico                  Botao/GPIO        LED/GPIO
+Orientacao Pedagogica        25                32
+Limpeza                      26                33
+Infraestrutura               27                23
+Funcionamento/alimentacao     -                 2
+
+BOTAO:
+Ligue o contato entre seu GPIO e GND. O codigo usa INPUT_PULLUP.
+Solto = HIGH; pressionado = LOW. Segurar nao gera novos toques.
+Use contatos normalmente abertos. Em botoes com quatro pernas, confira
+quais contatos sao interligados para nao deixar o botao sempre acionado.
+
+LED COMUM:
+GPIO -> resistor de 330 ohms -> anodo/positivo do LED.
+Catodo/negativo -> GND. Cada LED usa seu proprio resistor.
+O codigo considera HIGH = aceso e LOW = apagado.
+Se o botao tiver iluminacao integrada de 5 V ou 12 V, confirme sua
+especificacao: essa iluminacao pode exigir um circuito de acionamento.
+Nao conecte uma alimentacao de 5 V/12 V diretamente ao GPIO.
+
+4. COMO OS LEDS E PEDIDOS FUNCIONAM
+
+LED do botao:
+  Apagado = nenhum pedido ativo desse servico na placa.
+  Primeiro toque = acende e permanece aceso.
+  Segundo toque = apaga e solicita encerramento no servidor.
+  Terceiro toque = abre um NOVO pedido; o anterior permanece no historico.
+  Nao pisca durante o envio e nao apaga sozinho apos dois segundos.
+
+LED do sistema (GPIO 2):
+  Acende no inicio do setup() e permanece aceso enquanto o ESP32 executa.
+  Nao depende de Wi-Fi, Node-RED, Telegram nem cadastro da sala.
+  A consulta /status continua disponivel e gera mensagens no Monitor Serial.
+  Esse LED indica funcionamento/alimentacao da placa, nao entrega do pedido.
+
+O LED do botao mostra o estado desejado salvo na placa. Pode acender antes
+de o pedido aparecer no painel. Confira no Monitor Serial se a rede e o Node-RED estao disponiveis; o LED
+do sistema nao indica conexao. O pedido pode aguardar sincronizacao.
+
+5. ONDE ENTRAM O IP DO COMPUTADOR E O "IP DA INTERNET"
+
+No inicio do codigo ha estes campos:
+
+const char* WIFI_NOME = "NOME_DA_REDE";
+const char* WIFI_SENHA = "SENHA_DA_REDE";
+const char* NODE_RED_HOST = "192.168.2.128";
+const uint16_t NODE_RED_PORTA = 1880;
+
+WIFI_NOME e WIFI_SENHA:
+  Sao o nome da rede e sua senha; nao sao enderecos IP.
+
+NODE_RED_HOST:
+  E o IP LOCAL do computador que executa o Node-RED.
+  O endereco informado pelo professor, 192.168.2.128, foi colocado aqui.
+  Confirme se e o IPv4 do computador, e nao o IP do ESP32/roteador.
+  No Windows, use ipconfig no computador e confira o adaptador conectado.
+
+IP do ESP32:
+  E recebido automaticamente pelo roteador usando DHCP.
+  Cada uma das 47 placas precisa do seu proprio IP.
+  NAO grave o mesmo IP fixo em todas as placas.
+
+Gateway/roteador (as vezes chamado de "IP do Wi-Fi"):
+  Tambem e recebido automaticamente por DHCP.
+  O programa mostra "Gateway/roteador" no Monitor Serial para consulta.
+  Nao foi inventado um endereco de gateway neste codigo.
+
+IP publico da internet:
+  Nao e necessario para ESP32 e Node-RED se comunicarem na rede local.
+  O Telegram usa a internet disponivel no computador Node-RED; o servidor
+  acessa a API do Telegram por HTTPS sem precisar colocar seu IP publico
+  no firmware. Este pacote nao publica o painel na internet.
+
+REDE NECESSARIA:
+O ESP32 precisa alcancar o computador pela rede. Estar no mesmo nome de
+Wi-Fi nao garante comunicacao se houver isolamento de clientes/VLANs.
+O computador deve continuar ligado, com Node-RED executando e sem suspender.
+Se houver bloqueio, peca a TI acesso local a porta TCP 1880 do servidor.
+Para manter 192.168.2.128, prefira reservar esse IP do computador no DHCP
+com a TI. Se o IP do servidor mudar, as placas precisarao do novo endereco.
+
+ATENCAO A FREQUENCIA DO WI-FI:
+O nome recebido no anexo contem "5G". O nome sozinho nao prova a frequencia.
+Para ESP32 classico, confirme que a rede oferece 2,4 GHz. Se for exclusiva
+5 GHz, use o nome/senha de uma rede de 2,4 GHz compativel.
+
+6. PREPARAR O NODE-RED PARA GUARDAR O HISTORICO
+
+O armazenamento padrao em memoria nao basta para manter o historico apos
+reiniciar o servidor. Configure o armazenamento em arquivo ANTES dos testes.
+
+1. Localize o settings.js usado pelo seu Node-RED.
+   No Windows com instalacao padrao costuma estar em:
+   C:/Users/FabLab/.node-red/settings.js
+   O console de inicio do Node-RED informa o arquivo realmente utilizado.
+2. Faca uma copia de seguranca desse arquivo.
+3. Dentro de module.exports = { ... }, inclua/ajuste o bloco abaixo.
+   Se contextStorage ja existir, edite a entrada; nao crie outra com mesmo nome.
+
+contextStorage: {
+    default: "memoria",
+    memoria: { module: "memory" },
+    arquivo: {
+        module: "localfilesystem",
+        config: { cache: true, flushInterval: 5 }
+    }
+},
+
+4. Preserve as demais configuracoes do settings.js.
+5. Reinicie o processo do Node-RED. Apenas Deploy nao recarrega settings.js.
+6. Confira que o console inicia os stores memoria e arquivo sem erros.
+
+O fluxo verifica se arquivo e memoria sao stores separados para evitar
+usar acidentalmente a memoria quando o store arquivo nao foi configurado.
+Use os nomes exatamente como no exemplo.
+
+O arquivo e atualizado em intervalos de pelo menos 5 segundos. Uma queda
+abrupta pode perder alteracoes recentes ainda nao gravadas. As placas
+reenviam o estado atual, mas isso nao recupera todo o historico perdido.
+Pare o Node-RED normalmente antes de desligar o computador; faca backup da
+pasta de usuario do Node-RED, incluindo flows, credenciais e context.
+Este prototipo usa contexto em arquivo; para auditoria/retencao longa de
+muitas salas, planeje banco de dados e politica de backup com a TI.
+
+7. MIGRAR DO FLUXO ANTERIOR E CADASTRAR AS 47 SALAS
+
+1. No Node-RED atual, exporte e guarde uma copia do fluxo anterior.
+2. Copie seu cadastro MAC -> sala e guarde os dados do Telegram.
+3. Desative o fluxo antigo que atende POST /chamado e GET /status e faca
+   Deploy. Se houver um fluxo separado somente de status, desative-o tambem.
+   Nao deixe duas rotas iguais ativas.
+4. Importe fluxo_node_red_v3.json pelo menu Import.
+5. Abra o no Identificar sala e preencha o objeto salas, por exemplo:
+
+const salas = {
+    "AA:BB:CC:DD:EE:01": "Sala 101",
+    "AA:BB:CC:DD:EE:02": "Sala 102"
+};
+
+   Esses MACs sao SOMENTE EXEMPLOS. Use os IDs reais em maiusculas,
+   separados por virgulas, preservando os dois-pontos.
+6. Para descobrir o ID de uma placa, carregue o firmware e abra o Monitor
+   Serial em 115200. Aguarde a conexao e copie ID PARA CADASTRAR NO NODE-RED.
+7. Identifique cada caixa fisica e instale-a na sala cadastrada.
+8. Clique Done/Concluido e Deploy/Implementar.
+
+Uma placa sem cadastro recebe HTTP 404 e nao gera pedido com sala errada.
+O LED do sistema pode estar aceso mesmo assim: ele indica servidor acessivel.
+Se trocar uma placa, cadastre o MAC novo na sala correta. Encerre os pedidos
+antigos antes da troca para nao deixar registros ativos da placa retirada.
+
+O historico V3 comeca na implantacao desta versao; nao importa chamados
+antigos recebidos apenas pelo Telegram. Guarde a exportacao do fluxo antigo.
+A primeira inicializacao do firmware V3 comeca com os tres pedidos apagados,
+pois utiliza um novo espaco de memoria, separado da versao anterior.
+
+8. CARREGAR O FIRMWARE NA ARDUINO IDE
+
+1. Abra firmware/botoes_magicos_v3/botoes_magicos_v3.ino.
+2. Confira WIFI_NOME, WIFI_SENHA e NODE_RED_HOST no inicio.
+3. Use o suporte de placas esp32 da Espressif Systems e sua placa/porta.
+   As bibliotecas usadas ja fazem parte desse suporte; nao ha ArduinoJson
+   nem biblioteca adicional de dashboard para instalar.
+4. Compile e carregue na placa. Repita o MESMO codigo nas 47 placas.
+5. Abra o Monitor Serial em 115200 para acompanhar a conexao e os estados.
+6. Ao gravar atualizacoes, nao apague toda a memoria flash/NVS de placas
+   ja implantadas sem coordenar a manutencao do cadastro no servidor.
+
+O programa guarda um contador de revisao por botao. Revisao impar significa
+pedido ativo e revisao par significa encerrado. Isso e interno: o usuario
+so aperta o botao. O armazenamento ocorre no toque, nao em cada consulta.
+
+9. ABRIR E UTILIZAR O SITE DA GESTAO
+
+No navegador de um computador/celular com acesso a rede do servidor, abra:
+
+http://192.168.2.128:1880/gestao
+
+Aba Pedido recebido:
+  Exibe sala, servico, horario de recebimento e situacao Recebido.
+  Cada pedido continua aqui enquanto o botao permanecer ativo.
+
+Aba Pedido ja feito:
+  Exibe pedidos encerrados pelo segundo toque, com horario de encerramento.
+  O historico permanece nesta aba mesmo que o mesmo servico seja aberto de novo.
+
+O painel atualiza aproximadamente a cada 3 segundos e permite buscar por
+sala ou servico. O firmware sincroniza aproximadamente a cada 2 segundos,
+mais o tempo das requisicoes. A mudanca no site nao e instantanea.
+Se o navegador perder contato, aparece um aviso; os dados visiveis podem
+estar antigos. O status da pagina nao indica que todas as 47 placas estao online.
+
+Os horarios sao de recebimento pelo servidor e mostrados no fuso do navegador.
+Nao sao uma medicao exata do instante fisico do toque.
+
+10. TELEGRAM (OPCIONAL)
+
+Os pedidos passam a ser confirmados pelo armazenamento do Node-RED,
+independentemente de o Telegram estar disponivel.
+Se quiser manter os avisos, abra o no Telegram opcional e preencha:
+
+const botToken = "SEU_TOKEN";
+const chatId = "SEU_CHAT_ID";
+
+Deixe os valores de exemplo para usar somente o painel.
+O bot envia aviso de abertura e de encerramento observado pelo servidor.
+Uma repeticao da mesma revisao nao cria outro pedido nem nova notificacao.
+Falhas no Telegram nao apagam pedidos do site; sao avisadas no Node-RED.
+Esta versao nao reenfileira notificacoes do Telegram que falharam.
+Guarde o token localmente; o fluxo exportado apos configurar contem esse dado.
+
+11. QUEDA DE REDE, REINICIO E TOQUES RAPIDOS
+
+- O LED do botao muda no toque e o novo estado e guardado na placa.
+- Se cair a rede, o usuario ainda pode abrir/encerrar o estado local.
+- Quando a rede voltar, a placa reenvia os tres estados automaticamente.
+- Repetir uma mensagem nao alterna o estado no servidor: os pedidos usam
+  estado absoluto e numero de revisao. Isso evita reabertura por repeticao.
+- Desligar e ligar o ESP32 preserva o ultimo estado salvo e os LEDs.
+- Se o botao ja estiver segurado ao ligar, solte e aperte para um novo toque.
+
+LIMITE DO HISTORICO DURANTE INTERRUPCOES:
+O firmware sincroniza o estado mais recente, e nao uma fila de todos os
+toques. Se abrir e encerrar antes de o servidor receber a abertura, o painel
+registra o encerramento com indicacao de registro parcial. Varios ciclos
+inteiros feitos sem comunicacao nao sao todos reconstruidos. O ultimo
+estado e preservado. Para historico completo de cada toque offline, seria
+necessaria uma fila persistente de eventos, fora desta versao.
+
+Se aparecer HTTP 409, o servidor recebeu um contador mais antigo que o ja
+registrado. Isso pode acontecer ao apagar a memoria da placa. Nao tente
+resolver alterando numeros aleatoriamente; alinhe a manutencao dos estados
+com o professor e guarde o historico antes de limpar o registro da placa.
+
+12. ROTEIRO DE TESTE ANTES DE INSTALAR NAS 47 SALAS
+
+Teste primeiro uma placa e depois duas simultaneamente.
+
+1. Abra http://192.168.2.128:1880/status.
+   Deve aparecer BOTOES_MAGICOS_OK.
+2. Abra /gestao e confira as duas abas sem aviso de conexao.
+3. Confira que o LED do sistema acende ao iniciar a placa, mesmo sem rede.
+4. Aperte Pedagogico: seu LED deve acender e o pedido aparecer em Recebido.
+5. Segure o botao por 5 segundos: nao deve abrir pedidos extras.
+6. Solte e aperte novamente: LED apaga; pedido vai para Pedido ja feito.
+7. Aperte pela terceira vez: um pedido novo aparece em Recebido; o anterior
+   continua no historico.
+8. Repita para Limpeza e Infraestrutura; teste os tres pedidos ativos juntos.
+9. Desligue/religue o ESP32 com um pedido ativo: LED e pedido devem continuar
+   coerentes apos sincronizar.
+10. Derrube a rede; altere um estado; restaure e confira o estado final.
+11. Pare o Node-RED: o LED do sistema deve continuar aceso. Confira a
+    falha no Monitor Serial e a recuperacao do painel apos reiniciar o servidor.
+12. Aguarde mais de 5 segundos apos uma alteracao; reinicie normalmente o
+    Node-RED e confirme que o historico continua.
+13. Teste uma segunda placa cadastrada em outra sala e confirme a separacao.
+14. Teste chamadas com Telegram sem internet: o painel deve continuar
+    registrando os pedidos se ESP32 e servidor mantiverem comunicacao local.
+
+13. PROBLEMAS COMUNS
+
+LED do sistema nao acende:
+  Confira GPIO 2, resistor, polaridade, alimentacao e o firmware carregado.
+  A rede e o Node-RED nao controlam mais esse LED.
+
+LED do botao acende mas pedido nao aparece:
+  Confira Monitor Serial: cadastro MAC, HTTP 404/409/503, rede e fluxo V3.
+  LED do botao e estado local; nao e comprovante de recebimento pelo site.
+
+Wi-Fi nao conecta:
+  Confira nome exato, senha e disponibilidade de 2,4 GHz para ESP32 classico.
+
+HTTP 503 ou aviso de context store:
+  Ajuste settings.js conforme secao 6 e reinicie o processo do Node-RED.
+
+Pedido sumiu apos reiniciar Node-RED:
+  Confira store arquivo, pasta de usuario e gravacao em disco. Deploy com
+  outro ID de fluxo pode usar outro contexto; preserve o fluxo V3 instalado.
+
+LED nao acende ou fica invertido:
+  Confira GPIO, polaridade, resistor e especificacao do LED/botao iluminado.
+
+Erro expected '}' at end of input:
+  O arquivo pode ter sido copiado incompleto. Abra o .ino fornecido inteiro.
+
+14. ENDERECOS E CONTRATO DA VERSAO 3
+
+GET  /gestao       -> site para gestao.
+GET  /api/pedidos  -> dados das duas abas.
+GET  /status       -> disponibilidade do Node-RED/configuracao de contexto.
+POST /chamado      -> sincronizacao do estado da placa.
+
+O POST inclui dispositivo (MAC) e estados, com tipo, ativo e revisao para
+cada um dos tres botoes. A sala e obtida apenas do cadastro no servidor.
+HTTP 200 com BOTOES_MAGICOS_SYNC_OK confirma a sincronizacao no Node-RED;
+nao confirma entrega de Telegram nem gravacao fisica imediata em disco.
+
+Este pacote e para prototipo em rede local. Nao inclui login no painel,
+autenticacao das placas nem acesso externo. O MAC identifica a placa para
+o cadastro e nao funciona como senha. Para implantacao permanente, combine
+com a TI controle de acesso e backup apropriados para a rede da escola.
+
+15. FONTES TECNICAS
+
+Persistencia no Node-RED:
+https://nodered.org/docs/user-guide/context
+https://nodered.org/docs/api/context/store/localfilesystem
+
+Memoria de preferencias no ESP32:
+https://docs.espressif.com/projects/arduino-esp32/en/latest/tutorials/preferences.html
+
+Paginas HTML servidas pelo Node-RED:
+https://cookbook.nodered.org/http/create-an-http-endpoint
+
+Wi-Fi do ESP32 classico:
+https://www.espressif.com/sites/default/files/documentation/esp32_datasheet_en.pdf
+
+VALIDACAO DESTA ENTREGA
+O resultado final da compilacao e dos testes locais esta em VALIDACAO.txt.
+Os testes em circuito, no Wi-Fi da escola e no seu Node-RED precisam ser
+realizados seguindo a secao 12. O pacote nao altera seu servidor sozinho.
+
+ATUALIZACAO DE DIAGNOSTICO WI-FI E LEDS
+Foi removida a chamada manual WiFi.reconnect a cada 10 segundos, pois
+podia tentar conectar enquanto outra tentativa ainda estava em andamento.
+O firmware usa setAutoReconnect(true) e informa o codigo do motivo de
+desconexao no Monitor Serial. Confira nome, senha e rede de 2,4 GHz.
+Nesta revisao, o LED do sistema fica aceso desde a inicializacao; os LEDs
+dos botoes tambem funcionam localmente mesmo sem Wi-Fi. Continuidade nao confirma que um
+LED esta polarizado/alimentado corretamente.
+
+ATUALIZACAO: LED DE FUNCIONAMENTO
+GPIO 2 agora indica placa iniciada e permanece HIGH desde setup().
+Nao representa mais disponibilidade do Node-RED. Para um indicador que
+acenda diretamente com a alimentacao, mesmo antes de o programa iniciar,
+pode-se ligar um LED comum entre 3V3 e GND com resistor de 330 ohms em serie.
