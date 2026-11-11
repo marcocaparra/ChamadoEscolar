@@ -1,4 +1,4 @@
-VALIDACAO LOCAL - BOTOES MAGICOS V3 - 04/11/2026
+VALIDACAO HISTORICA - PAD - 04/11/2026
 
 Firmware:
 Compilado com sucesso para esp32:esp32:esp32 (ESP32 Dev Module),
