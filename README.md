@@ -1,5 +1,7 @@
 # PAD (Ponto de Apoio Docente)
 
+Veja o [status do projeto e as sugestões da apresentação](STATUS.md) para retomar o trabalho em outro computador.
+
 Sistema de chamados escolares com ESP32, Node-RED e painel de gestão. O primeiro toque abre o pedido e mantém o LED aceso; um novo toque após pelo menos cinco segundos cancela o pedido e apaga o LED. No painel, a coordenação pode confirmar, cancelar e excluir chamados. As abas são Recebidos, Concluídos, Cancelados e Excluídos. Confirmar, cancelar ou excluir pelo painel também apaga o LED na próxima sincronização. Com o Telegram configurado, o cancelamento e a exclusão pelo painel enviam um aviso ao grupo.
 
 ## Baixar no notebook de casa
